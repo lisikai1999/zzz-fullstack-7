@@ -11,6 +11,7 @@ class TaskResponse(BaseModel):
     urls_discovered: int
     urls_scraped: int
     urls_deduped: int
+    urls_rate_limited: int
     items_extracted: int
     errors: Optional[list]
     started_at: Optional[datetime]

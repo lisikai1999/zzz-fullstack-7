@@ -13,6 +13,7 @@ class Task(Base):
     urls_discovered = Column(Integer, default=0)
     urls_scraped = Column(Integer, default=0)
     urls_deduped = Column(Integer, default=0)
+    urls_rate_limited = Column(Integer, default=0)
     items_extracted = Column(Integer, default=0)
     errors = Column(JSON, default=list)
     started_at = Column(DateTime, nullable=True)

@@ -1,5 +1,7 @@
+import logging
 import time
 import httpx
+from collections import deque
 from urllib.parse import urljoin, urlparse
 from typing import Generator, Optional
 from app.scraper.parser import PageParser, ParseResult
@@ -8,6 +10,8 @@ from app.services.bloom_dedup import BloomDedup
 from app.services.rate_limiter import AdaptiveRateLimiter
 from app.services.alert_service import AlertService
 from app.schemas.spider import SpiderSelectors
+
+logger = logging.getLogger(__name__)
 
 
 class ScrapeEngine:
@@ -33,13 +37,17 @@ class ScrapeEngine:
         self.task_id = task_id
         self.parser = PageParser()
         self.playwright = PlaywrightFetcher() if use_playwright else None
-        self.stats = {"discovered": 0, "scraped": 0, "deduped": 0, "items": 0}
+        self.stats = {"discovered": 0, "scraped": 0, "deduped": 0, "items": 0, "rate_limited": 0}
 
     def run(self, urls: list[str], max_depth: int = 3) -> Generator[tuple[str, ParseResult], None, None]:
-        queue = [(url, 0) for url in urls]
+        queue = deque((url, 0) for url in urls)
+        retry_count: dict[str, int] = {}
+        max_retries = 5
+        initial_backoff = 2.0
+        max_backoff = 60.0
 
         while queue:
-            url, depth = queue.pop(0)
+            url, depth = queue.popleft()
             self.stats["discovered"] += 1
 
             if self.dedup.is_duplicate(self.domain, url):
@@ -56,11 +64,23 @@ class ScrapeEngine:
 
             if status_code == 429:
                 self.rate_limiter.report_throttled(self.domain)
+                attempts = retry_count.get(url, 0)
+                if attempts >= max_retries:
+                    self.stats["rate_limited"] += 1
+                    logger.warning(
+                        "URL abandoned after %d retries due to persistent 429: %s",
+                        max_retries, url,
+                    )
+                    continue
+                retry_count[url] = attempts + 1
+                backoff = min(initial_backoff * (2 ** attempts), max_backoff)
                 queue.append((url, depth))
-                time.sleep(2)
+                time.sleep(backoff)
                 continue
             elif status_code != 200 or html_content is None:
                 continue
+
+            retry_count.pop(url, None)
 
             self.rate_limiter.report_success(self.domain)
             self.stats["scraped"] += 1
